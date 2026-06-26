@@ -48,7 +48,9 @@
   var sceneStart = 0, lastFrame = 0, currentDwell = 55;
   var paused = false, brightness = CONFIG.brightness;
   var infoMode = CONFIG.infoMode;
-  var dimEl, helpEl, infoEl, hintEl;
+  var geo = null, weather = null, iss = null, geoTried = false, lastWx = 0, lastISS = 0;
+  var pomo = null, sw = { running: false, base: 0, acc: 0 };   // focus timer + stopwatch
+  var dimEl, helpEl, infoEl, toolEl, hintEl;
   var lastMouse = 0;
   var rafId = 0;
   var autoScale = 1;                         // auto-quality multiplier on top of CONFIG.renderScale
@@ -228,8 +230,9 @@
     var eff = brightness * nightFactor();
     dimEl.style.opacity = (1 - clamp(eff, 0.05, 1)).toFixed(3);
 
-    // info overlay (clock / dashboard); handles its own visibility
+    // info overlay (clock / dashboard) + tools (timer / stopwatch); each handles its own visibility
     updateInfo(tNow);
+    updateTools(tNow);
 
     // auto-advance (skipped while locked on one scene)
     if (!locked && !transitioning && (tNow - sceneStart) > currentDwell) advance(1);
@@ -289,10 +292,64 @@
     return { name: names[i], emoji: emo[i] };
   }
 
+  /* ---------- live data: weather + sun (open-meteo) and ISS (wheretheiss.at), free, no keys ---------- */
+  function jget(u) { return fetch(u, { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }); }
+  function ensureGeoWeather() {
+    if (geoTried) return; geoTried = true;
+    jget("https://ipwho.is/").then(function (g) {
+      if (g && g.success !== false && g.latitude != null) geo = { lat: g.latitude, lon: g.longitude, city: g.city || "" };
+      fetchWeather();
+    });
+  }
+  function fetchWeather() {
+    if (!geo) return; lastWx = Date.now();
+    jget("https://api.open-meteo.com/v1/forecast?latitude=" + geo.lat + "&longitude=" + geo.lon +
+      "&current=temperature_2m,weather_code&daily=sunrise,sunset&timezone=auto&temperature_unit=fahrenheit&forecast_days=1")
+      .then(function (w) {
+        if (w && w.current) weather = { temp: Math.round(w.current.temperature_2m), code: w.current.weather_code,
+          sunrise: w.daily && w.daily.sunrise && w.daily.sunrise[0], sunset: w.daily && w.daily.sunset && w.daily.sunset[0] };
+      });
+  }
+  function fetchISS() {
+    lastISS = Date.now();
+    jget("https://api.wheretheiss.at/v1/satellites/25544").then(function (s) {
+      if (s && s.latitude != null) iss = { lat: s.latitude, lon: s.longitude, alt: s.altitude };
+    });
+  }
+  function liveTick() {                                  // runs while the full dashboard is shown
+    ensureGeoWeather();
+    var now = Date.now();
+    if (geo && now - lastWx > 900000) fetchWeather();    // weather every 15 min
+    if (now - lastISS > 5000) fetchISS();                // ISS every 5 s
+  }
+  function wxText(code) {
+    code = +code;
+    if (code === 0) return { t: "Clear", e: "☀️" };
+    if (code <= 2) return { t: "Partly Cloudy", e: "⛅" };
+    if (code === 3) return { t: "Overcast", e: "☁️" };
+    if (code === 45 || code === 48) return { t: "Fog", e: "🌫️" };
+    if (code >= 51 && code <= 67) return { t: "Rain", e: "🌧️" };
+    if (code >= 71 && code <= 77) return { t: "Snow", e: "❄️" };
+    if (code >= 80 && code <= 82) return { t: "Showers", e: "🌦️" };
+    if (code >= 95) return { t: "Storm", e: "⛈️" };
+    return { t: "—", e: "🌡️" };
+  }
+  function fmtISO(s) {
+    if (!s) return "—"; var m = /T(\d\d):(\d\d)/.exec(s); if (!m) return "—";
+    var hh = +m[1], ap = hh >= 12 ? "PM" : "AM", h12 = hh % 12 || 12; return h12 + ":" + m[2] + " " + ap;
+  }
+  function fmtClock(sec, centi) {
+    if (sec < 0) sec = 0;
+    var base = pad2(Math.floor(sec / 60)) + ":" + pad2(Math.floor(sec % 60));
+    if (centi) base += "." + pad2(Math.floor((sec - Math.floor(sec)) * 100));
+    return base;
+  }
+
   var FF = "'Segoe UI',system-ui,sans-serif";
   function updateInfo(tNow) {
     if (infoMode <= 0) { if (infoEl._on) { infoEl.style.opacity = "0"; infoEl._on = false; } return; }
     if (!infoEl._on) { infoEl.style.opacity = "1"; infoEl._on = true; }
+    if (infoMode >= 4) liveTick();
     var d = new Date(), hh = d.getHours(), mm = d.getMinutes(), ss = d.getSeconds();
     var ap = hh >= 12 ? "PM" : "AM", h12 = hh % 12; if (h12 === 0) h12 = 12;
     // rebuild HTML only when the shown content changes (cheap; position still drifts every frame)
@@ -309,12 +366,38 @@
         var mp = moonPhase(d);
         html += "<div style=\"font:300 2.1vmin " + FF + ";opacity:.6;margin-top:.55em;letter-spacing:.1em\">" + mp.emoji + " " + mp.name + "</div>";
       }
+      if (infoMode >= 4) {
+        if (weather) { var wc = wxText(weather.code); html += "<div style=\"font:300 2.1vmin " + FF + ";opacity:.62;margin-top:.55em;letter-spacing:.08em\">" + wc.e + " " + weather.temp + "°  " + wc.t + (geo && geo.city ? "  ·  " + geo.city : "") + "</div>"; }
+        if (weather && weather.sunrise) html += "<div style=\"font:300 1.8vmin " + FF + ";opacity:.5;margin-top:.35em;letter-spacing:.08em\">🌅 " + fmtISO(weather.sunrise) + "    🌇 " + fmtISO(weather.sunset) + "</div>";
+        if (iss) html += "<div style=\"font:300 1.8vmin " + FF + ";opacity:.5;margin-top:.35em;letter-spacing:.08em\">🛰 " + iss.lat.toFixed(1) + ", " + iss.lon.toFixed(1) + "  ·  " + Math.round(iss.alt) + " km</div>";
+        if (!weather && !iss) html += "<div style=\"font:300 1.7vmin " + FF + ";opacity:.4;margin-top:.4em\">…live data loading…</div>";
+      }
       infoEl.innerHTML = html;
     }
     var x = 50 + 16 * Math.sin(tNow * (2 * Math.PI / 240));
     var y = 50 + 12 * Math.cos(tNow * (2 * Math.PI / 175));
     infoEl.style.left = x + "%";
     infoEl.style.top = y + "%";
+  }
+
+  /* ---------- focus timer (Pomodoro 25/5) + stopwatch ---------- */
+  function updateTools(tNow) {
+    var lines = [];
+    if (pomo && pomo.on) {
+      var el = (Date.now() - pomo.startMs) / 1000, cyc = 1800, c = el % cyc, focus = c < 1500;
+      lines.push((focus ? "⏳ FOCUS " : "☕ BREAK ") + fmtClock(focus ? (1500 - c) : (cyc - c)));
+    }
+    if (sw.running || sw.acc > 0) {
+      var ms = sw.acc + (sw.running ? (Date.now() - sw.base) : 0);
+      lines.push("⏱ " + fmtClock(ms / 1000, true) + (sw.running ? "" : "  ⏸"));
+    }
+    if (!lines.length) { if (toolEl._on) { toolEl.style.opacity = "0"; toolEl._on = false; } return; }
+    if (!toolEl._on) { toolEl.style.opacity = "1"; toolEl._on = true; }
+    var html = "";
+    for (var i = 0; i < lines.length; i++) html += "<div style=\"font:300 3vmin " + FF + ";letter-spacing:.12em\">" + lines[i] + "</div>";
+    toolEl.innerHTML = html;
+    toolEl.style.left = (50 + 13 * Math.cos(tNow * (2 * Math.PI / 200))) + "%";
+    toolEl.style.top = (73 + 8 * Math.sin(tNow * (2 * Math.PI / 150))) + "%";
   }
 
   /* ---------- transient hint (scene name) ---------- */
@@ -336,7 +419,16 @@
       case "ArrowDown": brightness = clamp(brightness - 0.05, 0.1, 1); flashHint("Brightness " + Math.round(brightness * 100) + "%"); break;
       case "l": case "L": locked = !locked; flashHint(locked ? "🔒 Locked on this scene" : "Auto-rotating"); break;
       case "p": case "P": paused = !paused; flashHint(paused ? "Paused" : "Playing"); break;
-      case "c": case "C": infoMode = (infoMode + 1) % 4; infoEl._key = ""; flashHint(["Info off", "Clock", "Clock + seconds", "Clock · date · moon"][infoMode]); break;
+      case "c": case "C": infoMode = (infoMode + 1) % 5; infoEl._key = ""; flashHint(["Info off", "Clock", "Clock + seconds", "Clock · date · moon", "Full dashboard · weather · ISS"][infoMode]); break;
+      case "t": case "T":
+        if (pomo && pomo.on) { pomo.on = false; flashHint("Focus timer off"); }
+        else { pomo = { on: true, startMs: Date.now() }; flashHint("⏳ Focus 25:00"); }
+        break;
+      case "k": case "K":
+        if (sw.running) { sw.acc += Date.now() - sw.base; sw.running = false; flashHint("⏱ Paused"); }
+        else { sw.base = Date.now(); sw.running = true; flashHint("⏱ Stopwatch running"); }
+        break;
+      case "r": case "R": pomo = null; sw = { running: false, base: 0, acc: 0 }; flashHint("Timers reset"); break;
       case "h": case "H": case "?": toggleHelp(); break;
       case "s": case "S": buildOrder(); advance(0); flashHint("Reshuffled"); break;
     }
@@ -378,6 +470,13 @@
     infoEl._on = false; infoEl._key = "";
     document.body.appendChild(infoEl);
 
+    toolEl = document.createElement("div");
+    toolEl.style.cssText = "position:fixed;transform:translate(-50%,-50%);text-align:center;white-space:nowrap;" +
+      "color:rgba(225,232,255,.55);pointer-events:none;z-index:11;opacity:0;transition:opacity .6s ease;" +
+      "text-shadow:0 0 20px rgba(120,170,255,.30);";
+    toolEl._on = false;
+    document.body.appendChild(toolEl);
+
     hintEl = document.createElement("div");
     hintEl.style.cssText = "position:fixed;left:50%;bottom:6vh;transform:translateX(-50%);color:rgba(255,255,255,.6);" +
       "font:300 2.4vmin 'Segoe UI',system-ui,sans-serif;letter-spacing:.18em;text-transform:uppercase;" +
@@ -395,7 +494,8 @@
       "<div style='opacity:.85'>Press <b>F11</b> for fullscreen</div>" +
       "<div style='opacity:.6;margin-top:14px;font-size:.92em'>" +
       "Space / &rarr; next &nbsp;·&nbsp; &larr; previous &nbsp;·&nbsp; &uarr;&darr; brightness<br>" +
-      "<b>L lock to this scene</b> &nbsp;·&nbsp; S shuffle &nbsp;·&nbsp; P pause &nbsp;·&nbsp; C clock/info &nbsp;·&nbsp; H help</div>" +
+      "<b>L lock</b> &nbsp;·&nbsp; S shuffle &nbsp;·&nbsp; P pause &nbsp;·&nbsp; C clock/info &nbsp;·&nbsp; H help<br>" +
+      "T focus timer &nbsp;·&nbsp; K stopwatch &nbsp;·&nbsp; R reset</div>" +
       "<div style='opacity:.4;margin-top:14px;font-size:.82em'>burn-in shield active · pixel-orbit + auto-dim</div>";
     document.body.appendChild(helpEl);
     setTimeout(function () { if (helpEl.dataset.shown === "1") { helpEl.dataset.shown = "0"; helpEl.style.opacity = "0"; } }, CONFIG.helpVisibleMs);
@@ -420,7 +520,7 @@
     if (q.has("brightness")) { CONFIG.brightness = qnum(q.get("brightness"), 0.1, 1, CONFIG.brightness); brightness = CONFIG.brightness; }
     if (q.has("dwell")) CONFIG.dwellSeconds = qnum(q.get("dwell"), 5, 600, CONFIG.dwellSeconds);
     if (q.has("clock")) CONFIG.infoMode = (q.get("clock") !== "0" && q.get("clock") !== "false") ? 1 : 0;
-    if (q.has("info")) CONFIG.infoMode = Math.max(0, Math.min(3, parseInt(q.get("info"), 10) || 0));
+    if (q.has("info")) CONFIG.infoMode = Math.max(0, Math.min(4, parseInt(q.get("info"), 10) || 0));
     if (q.has("auto")) CONFIG.autoQuality = (q.get("auto") !== "0" && q.get("auto") !== "false");
     if (q.has("scene")) CONFIG.startScene = q.get("scene");
     if (q.has("only")) { CONFIG.startScene = q.get("only"); CONFIG.lock = true; }   // pin to one scene

@@ -43,10 +43,18 @@ This complements — it does not replace — your **monitor's own** protections.
 | `L` | **Lock** on the current scene (stop auto-rotating) |
 | `S` | Reshuffle the order |
 | `P` | Pause / play |
-| `C` | Cycle info overlay: off → clock → clock + seconds → clock · date · moon |
+| `C` | Cycle info overlay: off → clock → +seconds → +date/moon → +weather/ISS |
+| `T` | Focus timer (Pomodoro 25/5) on/off |
+| `K` | Stopwatch start / pause |
+| `R` | Reset timers |
 | `H` / `?` | Show/hide help |
 
 Scenes auto-advance every ~35–75s (randomized so it never feels metronomic) with a 4s crossfade.
+
+The info overlay (`C`) builds up to a full dashboard: clock with seconds, day + date, local
+**moon phase**, and — at the last level — **weather + sunrise/sunset** and a live **ISS** position.
+The weather/ISS level needs internet (free APIs, no keys; auto-located by IP); everything else is
+offline. All overlays are dim and slowly drift, so they stay burn-in-safe.
 
 ---
 
