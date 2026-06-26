@@ -1,7 +1,7 @@
 # OLED Ambient Show
 
 A self-contained, **burn-in-safe generative ambient display** for an always-on OLED screen.
-Sixteen never-repeating scenes — cosmic nebulae, auroras, flow fields, spiral galaxies,
+Fifteen never-repeating scenes — cosmic nebulae, flow fields, spiral galaxies,
 pinpoint starfields, hairline filaments and filigree — that crossfade forever on true black.
 No installs, no accounts, no files to download. Just open it and press **F11**.
 
@@ -61,6 +61,24 @@ git clone https://github.com/Ericdataplus/oled-ambient-show.git
 
 ---
 
+## Cast it to a TV (e.g. an LG OLED + Apple TV)
+
+Heads up: an **Apple TV can't "cast" a website** — tvOS has no web browser and no Chromecast.
+Two things that *do* work:
+
+- **Easiest — the TV's own browser.** Most smart TVs (LG webOS, Samsung Tizen…) have a built-in
+  **Web Browser** app. Open the URL there and go fullscreen — no other device needed, and it can
+  stay on. On a 4K TV add **`?lite`** so it runs smoothly:
+  `https://ericdataplus.github.io/oled-ambient-show/?lite`
+- **AirPlay / screen-mirror** from an iPhone, iPad, or Mac to the Apple TV (Control Center →
+  Screen Mirroring). The site runs on your device and mirrors to the TV — fine for a while, but
+  the device must stay awake, so it's not ideal for always-on.
+
+Either way the engine **auto-lowers its quality** if it lands on a screen it can't render
+smoothly, so it should stay fluid even if you forget `?lite`.
+
+---
+
 ## Keep it on permanently
 
 Use the included launcher to open the show in a clean, borderless fullscreen window on your
@@ -112,6 +130,9 @@ Everything tweakable lives in the `CONFIG` block at the top of [`engine.js`](eng
 | `nightDimming` | `true` | Gentle extra dimming in the small hours. |
 | `orbitAmplitude` | `14` | How far the burn-in pixel-orbit drifts (px). |
 | `showClock` | `false` | Start with the drifting clock on. |
+
+Don't want to edit files? Pass options in the URL instead — **`?lite`**, `?scale=`,
+`?brightness=`, `?dwell=`, `?clock=1`, `?auto=0` (documented at the bottom of `engine.js`).
 
 ---
 

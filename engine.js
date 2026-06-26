@@ -27,6 +27,8 @@
     maxDPR: 3,             // cap device-pixel-ratio (3 = always render this 170-PPI panel natively)
     renderScale: 1.5,      // SSAA: render >1 then downscale for razor-sharp fine detail.
                            //   1.0 = native (fast) · 1.5 = crisp (default) · 2.0 = ultra (heavier)
+    autoQuality: true,     // auto-lower render scale if the device can't hold a smooth frame rate
+    minRenderScale: 0.75,  // floor the auto-quality guard won't drop below
     shuffle: true,         // randomized, non-repeating scene order
     showClock: false,      // optional drifting dim clock (off by default)
     cursorIdleMs: 2000,    // hide cursor after this much mouse stillness
@@ -46,6 +48,8 @@
   var dimEl, helpEl, clockEl, hintEl;
   var lastMouse = 0;
   var rafId = 0;
+  var autoScale = 1;                         // auto-quality multiplier on top of CONFIG.renderScale
+  var fpsAccum = 0, fpsFrames = 0, fpsWinStart = 0, qualityCooldown = 0;
 
   function now() { return performance.now() / 1000; }
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
@@ -61,7 +65,7 @@
     // Backing store is the panel's true device pixels times the SSAA factor.
     // The element is then CSS-sized to the viewport, so the browser downsamples
     // the extra samples into buttery-smooth, crisp fine detail on the dense panel.
-    pxScale = dpr * CONFIG.renderScale;
+    pxScale = dpr * CONFIG.renderScale * autoScale;
     pw = Math.round(cw * pxScale);
     ph = Math.round(ch * pxScale);
 
@@ -162,8 +166,10 @@
     if (paused) return;
 
     var tNow = now();
-    var dt = lastFrame ? Math.min(tNow - lastFrame, 0.1) : 0.016;
+    var rawDt = lastFrame ? (tNow - lastFrame) : 0.016;
+    var dt = Math.min(rawDt, 0.1);
     lastFrame = tNow;
+    autoQualityTick(tNow, rawDt);
 
     // pixel-orbit: slow Lissajous, two near-coprime periods so it never visibly repeats
     var ox = Math.sin(tNow * (2 * Math.PI / 660)) * CONFIG.orbitAmplitude;
@@ -216,6 +222,30 @@
       inst.ctx.setTransform(1, 0, 0, 1, 0, 0);
       inst.ctx.fillStyle = "#000"; inst.ctx.fillRect(0, 0, pw, ph);
       inst.ctx.setTransform(pxScale, 0, 0, pxScale, 0, 0);
+    }
+  }
+
+  /* ---------- auto quality: keep the frame rate smooth on weaker devices ----------
+     Big 4K TVs (e.g. an LG C-series) can't render the supersampled buffer at 60fps.
+     If we detect a sustained low frame rate, step the render scale down (never below
+     CONFIG.minRenderScale) until it's smooth. Spikes from tab-switches are ignored. */
+  function autoQualityTick(tNow, rawDt) {
+    if (!CONFIG.autoQuality) return;
+    if (tNow < qualityCooldown) { fpsWinStart = tNow; fpsAccum = 0; fpsFrames = 0; return; }
+    if (rawDt > 0.5) return;                 // ignore tab-switch / GC hiccups
+    if (!fpsWinStart) fpsWinStart = tNow;
+    fpsAccum += rawDt; fpsFrames++;
+    if (tNow - fpsWinStart >= 2.5 && fpsFrames > 20) {
+      var fps = fpsFrames / fpsAccum;
+      fpsAccum = 0; fpsFrames = 0; fpsWinStart = tNow;
+      var effective = CONFIG.renderScale * autoScale;
+      if (fps < 45 && effective > CONFIG.minRenderScale + 0.001) {
+        var target = Math.max(CONFIG.minRenderScale, effective * 0.8);
+        autoScale = target / CONFIG.renderScale;
+        qualityCooldown = tNow + 3;          // let it settle before measuring again
+        sizeStage();
+        flashHint("Tuned for this screen · " + Math.round(target * 100) + "%");
+      }
     }
   }
 
@@ -315,8 +345,31 @@
     setTimeout(function () { if (helpEl.dataset.shown === "1") { helpEl.dataset.shown = "0"; helpEl.style.opacity = "0"; } }, CONFIG.helpVisibleMs);
   }
 
+  /* ---------- URL overrides (e.g. ?lite for TVs / casting to a 4K screen) ----------
+     Open the same page with options, no file editing needed:
+       ?lite            native res, lighter — recommended on a 4K TV / when casting
+       ?scale=1.25      set the render scale directly (0.5–2)
+       ?brightness=0.7  master brightness (0.1–1)
+       ?dwell=40        seconds per scene
+       ?clock=1         start with the drifting clock on
+       ?auto=0          disable the auto-quality guard
+     Combine with &, e.g. ...?lite&brightness=0.7 */
+  function qnum(v, lo, hi, dflt) { var n = parseFloat(v); return isNaN(n) ? dflt : clamp(n, lo, hi); }
+  function applyQueryOverrides() {
+    var q;
+    try { q = new URLSearchParams(window.location.search); } catch (e) { return; }
+    if (q.has("lite")) CONFIG.renderScale = 1.0;
+    if (q.has("scale")) CONFIG.renderScale = qnum(q.get("scale"), 0.5, 2, CONFIG.renderScale);
+    if (q.has("renderScale")) CONFIG.renderScale = qnum(q.get("renderScale"), 0.5, 2, CONFIG.renderScale);
+    if (q.has("brightness")) { CONFIG.brightness = qnum(q.get("brightness"), 0.1, 1, CONFIG.brightness); brightness = CONFIG.brightness; }
+    if (q.has("dwell")) CONFIG.dwellSeconds = qnum(q.get("dwell"), 5, 600, CONFIG.dwellSeconds);
+    if (q.has("clock")) CONFIG.showClock = (q.get("clock") !== "0" && q.get("clock") !== "false");
+    if (q.has("auto")) CONFIG.autoQuality = (q.get("auto") !== "0" && q.get("auto") !== "false");
+  }
+
   /* ---------- boot ---------- */
   function boot() {
+    applyQueryOverrides();
     build();
     scenes = (window.OLED_SCENES || []).filter(function (s) { return s && typeof s.draw === "function"; });
     sizeStage();
@@ -333,10 +386,11 @@
     window.addEventListener("mousemove", onMouse);
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) { paused = true; }
-      else { paused = false; lastFrame = 0; }
+      else { paused = false; lastFrame = 0; qualityCooldown = now() + 3; }
     });
 
     lastMouse = performance.now();
+    qualityCooldown = now() + 4;   // warm up before judging frame rate
     rafId = requestAnimationFrame(frame);
   }
 
