@@ -32,7 +32,7 @@
     shuffle: true,         // randomized, non-repeating scene order
     lock: false,           // stay on ONE scene instead of auto-rotating (toggle live with the L key)
     startScene: null,      // start on a specific scene by name or index (also via ?scene= / ?only=)
-    showClock: false,      // optional drifting dim clock (off by default)
+    infoMode: 0,           // overlay: 0 off · 1 clock · 2 clock+seconds · 3 clock+date+moon (cycle with C)
     cursorIdleMs: 2000,    // hide cursor after this much mouse stillness
     helpVisibleMs: 9000    // auto-hide the help overlay after load
   };
@@ -47,7 +47,8 @@
   var transStart = 0, transitioning = false;
   var sceneStart = 0, lastFrame = 0, currentDwell = 55;
   var paused = false, brightness = CONFIG.brightness;
-  var dimEl, helpEl, clockEl, hintEl;
+  var infoMode = CONFIG.infoMode;
+  var dimEl, helpEl, infoEl, hintEl;
   var lastMouse = 0;
   var rafId = 0;
   var autoScale = 1;                         // auto-quality multiplier on top of CONFIG.renderScale
@@ -227,8 +228,8 @@
     var eff = brightness * nightFactor();
     dimEl.style.opacity = (1 - clamp(eff, 0.05, 1)).toFixed(3);
 
-    // optional drifting clock
-    if (CONFIG.showClock) updateClock(tNow);
+    // info overlay (clock / dashboard); handles its own visibility
+    updateInfo(tNow);
 
     // auto-advance (skipped while locked on one scene)
     if (!locked && !transitioning && (tNow - sceneStart) > currentDwell) advance(1);
@@ -274,18 +275,46 @@
     }
   }
 
-  /* ---------- clock (optional, dim + drifting => burn-in safe) ---------- */
-  function updateClock(tNow) {
-    var d = new Date();
-    var hh = d.getHours(), mm = d.getMinutes();
-    var ap = hh >= 12 ? "PM" : "AM";
-    var h12 = hh % 12; if (h12 === 0) h12 = 12;
-    clockEl.textContent = h12 + ":" + (mm < 10 ? "0" + mm : mm) + " " + ap;
-    // drift slowly around the center third of the screen
-    var x = 50 + 18 * Math.sin(tNow * (2 * Math.PI / 240));
-    var y = 50 + 14 * Math.cos(tNow * (2 * Math.PI / 175));
-    clockEl.style.left = x + "%";
-    clockEl.style.top = y + "%";
+  /* ---------- info overlay: clock / seconds / dashboard (dim + drifting => burn-in safe) ---------- */
+  function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+
+  // Moon phase computed locally (no network) from a known new moon.
+  function moonPhase(d) {
+    var lp = 2551442.8;                                   // synodic month, seconds (29.5306 days)
+    var newMoon = Date.UTC(2000, 0, 6, 18, 14, 0) / 1000;
+    var frac = ((d.getTime() / 1000 - newMoon) % lp + lp) % lp / lp;  // 0..1
+    var names = ["New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous", "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent"];
+    var emo = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"];
+    var i = Math.floor(frac * 8 + 0.5) % 8;
+    return { name: names[i], emoji: emo[i] };
+  }
+
+  var FF = "'Segoe UI',system-ui,sans-serif";
+  function updateInfo(tNow) {
+    if (infoMode <= 0) { if (infoEl._on) { infoEl.style.opacity = "0"; infoEl._on = false; } return; }
+    if (!infoEl._on) { infoEl.style.opacity = "1"; infoEl._on = true; }
+    var d = new Date(), hh = d.getHours(), mm = d.getMinutes(), ss = d.getSeconds();
+    var ap = hh >= 12 ? "PM" : "AM", h12 = hh % 12; if (h12 === 0) h12 = 12;
+    // rebuild HTML only when the shown content changes (cheap; position still drifts every frame)
+    var key = infoMode + "|" + h12 + ":" + mm + (infoMode >= 2 ? ":" + ss : "") + (infoMode >= 3 ? "|" + d.getDate() : "");
+    if (key !== infoEl._key) {
+      infoEl._key = key;
+      var sec = infoMode >= 2 ? "<span style=\"font-size:.42em;opacity:.62\">:" + pad2(ss) + "</span>" : "";
+      var html = "<div style=\"font:200 7vmin " + FF + ";letter-spacing:.04em\">" + h12 + ":" + pad2(mm) + sec +
+        " <span style=\"font-size:.32em;opacity:.6;font-weight:300\">" + ap + "</span></div>";
+      if (infoMode >= 3) {
+        var days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        var mon = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        html += "<div style=\"font:300 2.5vmin " + FF + ";opacity:.72;margin-top:.5em;letter-spacing:.16em;text-transform:uppercase\">" + days[d.getDay()] + " · " + mon[d.getMonth()] + " " + d.getDate() + "</div>";
+        var mp = moonPhase(d);
+        html += "<div style=\"font:300 2.1vmin " + FF + ";opacity:.6;margin-top:.55em;letter-spacing:.1em\">" + mp.emoji + " " + mp.name + "</div>";
+      }
+      infoEl.innerHTML = html;
+    }
+    var x = 50 + 16 * Math.sin(tNow * (2 * Math.PI / 240));
+    var y = 50 + 12 * Math.cos(tNow * (2 * Math.PI / 175));
+    infoEl.style.left = x + "%";
+    infoEl.style.top = y + "%";
   }
 
   /* ---------- transient hint (scene name) ---------- */
@@ -307,7 +336,7 @@
       case "ArrowDown": brightness = clamp(brightness - 0.05, 0.1, 1); flashHint("Brightness " + Math.round(brightness * 100) + "%"); break;
       case "l": case "L": locked = !locked; flashHint(locked ? "🔒 Locked on this scene" : "Auto-rotating"); break;
       case "p": case "P": paused = !paused; flashHint(paused ? "Paused" : "Playing"); break;
-      case "c": case "C": CONFIG.showClock = !CONFIG.showClock; clockEl.style.display = CONFIG.showClock ? "block" : "none"; break;
+      case "c": case "C": infoMode = (infoMode + 1) % 4; infoEl._key = ""; flashHint(["Info off", "Clock", "Clock + seconds", "Clock · date · moon"][infoMode]); break;
       case "h": case "H": case "?": toggleHelp(); break;
       case "s": case "S": buildOrder(); advance(0); flashHint("Reshuffled"); break;
     }
@@ -342,11 +371,12 @@
     dimEl.style.cssText = "position:fixed;inset:0;background:#000;pointer-events:none;z-index:10;transition:opacity .8s ease;";
     document.body.appendChild(dimEl);
 
-    clockEl = document.createElement("div");
-    clockEl.style.cssText = "position:fixed;transform:translate(-50%,-50%);color:rgba(255,255,255,.42);" +
-      "font:300 5vmin 'Segoe UI',system-ui,sans-serif;letter-spacing:.08em;pointer-events:none;z-index:11;" +
-      "text-shadow:0 0 18px rgba(120,180,255,.25);display:" + (CONFIG.showClock ? "block" : "none") + ";";
-    document.body.appendChild(clockEl);
+    infoEl = document.createElement("div");
+    infoEl.style.cssText = "position:fixed;transform:translate(-50%,-50%);text-align:center;white-space:nowrap;" +
+      "color:rgba(225,232,255,.5);pointer-events:none;z-index:11;opacity:0;transition:opacity 1s ease;" +
+      "text-shadow:0 0 22px rgba(120,170,255,.28);";
+    infoEl._on = false; infoEl._key = "";
+    document.body.appendChild(infoEl);
 
     hintEl = document.createElement("div");
     hintEl.style.cssText = "position:fixed;left:50%;bottom:6vh;transform:translateX(-50%);color:rgba(255,255,255,.6);" +
@@ -365,7 +395,7 @@
       "<div style='opacity:.85'>Press <b>F11</b> for fullscreen</div>" +
       "<div style='opacity:.6;margin-top:14px;font-size:.92em'>" +
       "Space / &rarr; next &nbsp;·&nbsp; &larr; previous &nbsp;·&nbsp; &uarr;&darr; brightness<br>" +
-      "<b>L lock to this scene</b> &nbsp;·&nbsp; S shuffle &nbsp;·&nbsp; P pause &nbsp;·&nbsp; C clock &nbsp;·&nbsp; H help</div>" +
+      "<b>L lock to this scene</b> &nbsp;·&nbsp; S shuffle &nbsp;·&nbsp; P pause &nbsp;·&nbsp; C clock/info &nbsp;·&nbsp; H help</div>" +
       "<div style='opacity:.4;margin-top:14px;font-size:.82em'>burn-in shield active · pixel-orbit + auto-dim</div>";
     document.body.appendChild(helpEl);
     setTimeout(function () { if (helpEl.dataset.shown === "1") { helpEl.dataset.shown = "0"; helpEl.style.opacity = "0"; } }, CONFIG.helpVisibleMs);
@@ -389,7 +419,8 @@
     if (q.has("renderScale")) CONFIG.renderScale = qnum(q.get("renderScale"), 0.5, 2, CONFIG.renderScale);
     if (q.has("brightness")) { CONFIG.brightness = qnum(q.get("brightness"), 0.1, 1, CONFIG.brightness); brightness = CONFIG.brightness; }
     if (q.has("dwell")) CONFIG.dwellSeconds = qnum(q.get("dwell"), 5, 600, CONFIG.dwellSeconds);
-    if (q.has("clock")) CONFIG.showClock = (q.get("clock") !== "0" && q.get("clock") !== "false");
+    if (q.has("clock")) CONFIG.infoMode = (q.get("clock") !== "0" && q.get("clock") !== "false") ? 1 : 0;
+    if (q.has("info")) CONFIG.infoMode = Math.max(0, Math.min(3, parseInt(q.get("info"), 10) || 0));
     if (q.has("auto")) CONFIG.autoQuality = (q.get("auto") !== "0" && q.get("auto") !== "false");
     if (q.has("scene")) CONFIG.startScene = q.get("scene");
     if (q.has("only")) { CONFIG.startScene = q.get("only"); CONFIG.lock = true; }   // pin to one scene
@@ -411,6 +442,7 @@
   /* ---------- boot ---------- */
   function boot() {
     applyQueryOverrides();
+    infoMode = CONFIG.infoMode;
     detectColorSpace();
     build();
     scenes = (window.OLED_SCENES || []).filter(function (s) { return s && typeof s.draw === "function"; });

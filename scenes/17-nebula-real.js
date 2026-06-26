@@ -39,9 +39,14 @@
     " float st=0.0;",
     " vec2 suv=uv+drift*0.03;",
     " for(int k=0;k<3;k++){float sc=180.0+float(k)*260.0;vec2 g=suv*sc*vec2(u_res.x/u_res.y,1.0);",
-    "  vec2 gi=floor(g);float h=hash(gi+float(k)*23.0);",
-    "  float s=step(0.9965,h);float tw=0.55+0.45*sin(u_time*(0.8+h*2.5)+h*40.0);",
-    "  st+=s*tw*(0.9-float(k)*0.22);}",
+    "  vec2 gi=floor(g),gf=fract(g);float h=hash(gi+float(k)*23.0);",
+    "  if(h>0.9965){",                                            // only sparse cells get a star
+    "   vec2 pos=vec2(hash(gi+vec2(1.3,7.7)),hash(gi+vec2(4.1,2.9)));", // sub-cell position
+    "   float dst=length(gf-pos);",
+    "   float tw=0.55+0.45*sin(u_time*(0.8+h*2.5)+h*40.0);",
+    "   st+=smoothstep(0.14,0.0,dst)*tw*(0.9-float(k)*0.22);",   // ROUND point, not a full cell
+    "  }",
+    " }",
     " col+=vec3(0.85,0.90,1.0)*st;",
     " float vig=smoothstep(1.45,0.25,length(p));",
     " col*=mix(0.62,1.0,vig);",

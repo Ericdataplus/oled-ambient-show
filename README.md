@@ -43,7 +43,7 @@ This complements — it does not replace — your **monitor's own** protections.
 | `L` | **Lock** on the current scene (stop auto-rotating) |
 | `S` | Reshuffle the order |
 | `P` | Pause / play |
-| `C` | Toggle a (drifting, dim) clock |
+| `C` | Cycle info overlay: off → clock → clock + seconds → clock · date · moon |
 | `H` / `?` | Show/hide help |
 
 Scenes auto-advance every ~35–75s (randomized so it never feels metronomic) with a 4s crossfade.
@@ -135,7 +135,7 @@ Everything tweakable lives in the `CONFIG` block at the top of [`engine.js`](eng
 | `showClock` | `false` | Start with the drifting clock on. |
 
 Don't want to edit files? Pass options in the URL instead — **`?lite`**, `?scale=`,
-`?brightness=`, `?dwell=`, `?clock=1`, `?auto=0`, and to pin one scene **`?only=Diamond Dust`**
+`?brightness=`, `?dwell=`, `?clock=1` / `?info=3` (info overlay level), `?auto=0`, and to pin one scene **`?only=Diamond Dust`**
 (or `?scene=…` to start there but keep rotating, `?lock` to freeze on the first).
 Combine with `&`. All documented at the bottom of `engine.js`.
 
