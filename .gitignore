@@ -1,0 +1,9 @@
+# OS cruft
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor cruft
+.vscode/
+*.swp

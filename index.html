@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OLED Ambient Show</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <!-- Scenes register themselves on window.OLED_SCENES. Missing files fail
+       harmlessly; the engine has a built-in fallback so the screen is never dead. -->
+  <script src="scenes/01-nebula-drift.js"></script>
+  <script src="scenes/02-aurora.js"></script>
+  <script src="scenes/03-flow-field.js"></script>
+  <script src="scenes/04-bokeh.js"></script>
+  <script src="scenes/05-metaballs.js"></script>
+  <script src="scenes/06-constellation.js"></script>
+  <script src="scenes/07-silk-waves.js"></script>
+  <script src="scenes/08-spiral-galaxy.js"></script>
+  <script src="scenes/09-rain-ripples.js"></script>
+  <!-- high-density pack: fine, crisp detail that exploits the 170-PPI panel -->
+  <script src="scenes/10-diamond-dust.js"></script>
+  <script src="scenes/11-phyllotaxis.js"></script>
+  <script src="scenes/12-filament-web.js"></script>
+  <script src="scenes/13-harmonograph.js"></script>
+  <script src="scenes/14-plankton-net.js"></script>
+  <script src="scenes/15-crystal-lattice.js"></script>
+  <script src="scenes/16-ink-tendrils.js"></script>
+
+  <!-- Engine boots last, after scenes have registered. -->
+  <script src="engine.js"></script>
+</body>
+</html>
