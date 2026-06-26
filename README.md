@@ -1,14 +1,16 @@
 # OLED Ambient Show
 
 A self-contained, **burn-in-safe generative ambient display** for an always-on OLED screen.
-Fifteen never-repeating scenes — cosmic nebulae, flow fields, spiral galaxies,
-pinpoint starfields, hairline filaments and filigree — that crossfade forever on true black.
+A growing library of never-repeating scenes — cosmic nebulae (including a realtime WebGL one),
+flow fields, spiral galaxies, pinpoint starfields, hairline filaments, and continuously
+color-cycling **wide-gamut (display-p3)** fields — that crossfade forever on true black.
 No installs, no accounts, no files to download. Just open it and press **F11**.
 
 ### ▶ Live: https://ericdataplus.github.io/oled-ambient-show/
 
 Built for a 13" 1080p OLED (~170 PPI), so it renders at native resolution **with
-supersampling** for razor-sharp fine detail — but it scales to any screen.
+supersampling** for razor-sharp fine detail, and paints in **wide-gamut display-p3**
+(colors beyond sRGB) where the browser supports it — but it scales to any screen.
 
 ---
 
@@ -38,6 +40,7 @@ This complements — it does not replace — your **monitor's own** protections.
 | `Space` / `→` | Next scene |
 | `←` | Previous scene |
 | `↑` / `↓` | Brightness up / down |
+| `L` | **Lock** on the current scene (stop auto-rotating) |
 | `S` | Reshuffle the order |
 | `P` | Pause / play |
 | `C` | Toggle a (drifting, dim) clock |
@@ -132,7 +135,9 @@ Everything tweakable lives in the `CONFIG` block at the top of [`engine.js`](eng
 | `showClock` | `false` | Start with the drifting clock on. |
 
 Don't want to edit files? Pass options in the URL instead — **`?lite`**, `?scale=`,
-`?brightness=`, `?dwell=`, `?clock=1`, `?auto=0` (documented at the bottom of `engine.js`).
+`?brightness=`, `?dwell=`, `?clock=1`, `?auto=0`, and to pin one scene **`?only=Diamond Dust`**
+(or `?scene=…` to start there but keep rotating, `?lock` to freeze on the first).
+Combine with `&`. All documented at the bottom of `engine.js`.
 
 ---
 
@@ -152,6 +157,9 @@ self-contained module:
       ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);         // always paint black
       // ... draw using t (seconds) / dt. ctx.oledDPR = real device pixels per CSS px
       //     for true 1-pixel hairlines: ctx.lineWidth = 1 / ctx.oledDPR
+      //     ctx.oledWideGamut === true -> you can use "color(display-p3 r g b / a)" for
+      //     colors beyond sRGB (fall back to rgba() when false). Optional teardown(state)
+      //     is called when the scene is discarded (release WebGL contexts there).
     }
   });
 })();

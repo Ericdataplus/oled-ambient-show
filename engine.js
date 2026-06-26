@@ -30,6 +30,8 @@
     autoQuality: true,     // auto-lower render scale if the device can't hold a smooth frame rate
     minRenderScale: 0.75,  // floor the auto-quality guard won't drop below
     shuffle: true,         // randomized, non-repeating scene order
+    lock: false,           // stay on ONE scene instead of auto-rotating (toggle live with the L key)
+    startScene: null,      // start on a specific scene by name or index (also via ?scene= / ?only=)
     showClock: false,      // optional drifting dim clock (off by default)
     cursorIdleMs: 2000,    // hide cursor after this much mouse stillness
     helpVisibleMs: 9000    // auto-hide the help overlay after load
@@ -50,6 +52,19 @@
   var rafId = 0;
   var autoScale = 1;                         // auto-quality multiplier on top of CONFIG.renderScale
   var fpsAccum = 0, fpsFrames = 0, fpsWinStart = 0, qualityCooldown = 0;
+  var locked = false;                        // when true, stay on the current scene (no auto-advance)
+  var COLOR_SPACE = "srgb", wideGamut = false; // display-p3 wide gamut when the browser supports it
+
+  // Detect wide-gamut canvas support so scenes can paint colors beyond sRGB on the OLED.
+  function detectColorSpace() {
+    try {
+      var c = document.createElement("canvas");
+      var x = c.getContext("2d", { colorSpace: "display-p3" });
+      if (x && x.getContextAttributes && x.getContextAttributes().colorSpace === "display-p3") {
+        COLOR_SPACE = "display-p3"; wideGamut = true;
+      }
+    } catch (e) { /* old browser: stay sRGB */ }
+  }
 
   function now() { return performance.now() / 1000; }
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
@@ -86,11 +101,12 @@
   function makeBuffer() {
     var c = document.createElement("canvas");
     c.width = pw; c.height = ph;
-    var x = c.getContext("2d");
+    var x = c.getContext("2d", { colorSpace: COLOR_SPACE });
     return { canvas: c, ctx: x };
   }
 
   function reflowScene(inst) {
+    if (inst.state) disposeScene(inst);   // release old GL context before rebuilding (e.g. on resize)
     var buf = makeBuffer();
     inst.canvas = buf.canvas;
     inst.ctx = buf.ctx;
@@ -102,6 +118,7 @@
     // one real screen pixel at full brightness after the SSAA buffer downscales
     // — crisp AND bright, instead of sub-pixel-thin and dim.
     inst.ctx.oledDPR = dpr;
+    inst.ctx.oledWideGamut = wideGamut;   // scenes use display-p3 colors when true
     try { inst.state = inst.def.setup ? inst.def.setup(inst.ctx, cw, ch) : {}; }
     catch (e) { console.error("setup failed:", inst.def.name, e); inst.state = {}; }
   }
@@ -110,6 +127,12 @@
     var inst = { def: def, canvas: null, ctx: null, state: null, start: now() };
     reflowScene(inst);
     return inst;
+  }
+
+  // Let scenes release resources (e.g. a WebGL context) when they're discarded,
+  // so an all-day run cycling through shader scenes never leaks GL contexts.
+  function disposeScene(inst) {
+    if (inst && inst.def && inst.def.teardown) { try { inst.def.teardown(inst.state); } catch (e) {} }
   }
 
   /* ---------- scene order ---------- */
@@ -129,11 +152,13 @@
     var def = scenes[((idx % scenes.length) + scenes.length) % scenes.length];
     var next = makeScene(def);
     if (current && !immediate) {
+      if (outgoing) disposeScene(outgoing);   // rapid manual next: drop the prior outgoing
       outgoing = current;
       transitioning = true;
       transStart = now();
     } else {
-      current && (current = null);
+      if (current) disposeScene(current);
+      current = null;
       outgoing = null;
       transitioning = false;
     }
@@ -193,7 +218,7 @@
       sctx.globalAlpha = e;
       sctx.drawImage(current.canvas, 0, 0);
       sctx.globalAlpha = 1;
-      if (p >= 1) { transitioning = false; outgoing = null; }
+      if (p >= 1) { transitioning = false; disposeScene(outgoing); outgoing = null; }
     } else if (current) {
       sctx.drawImage(current.canvas, 0, 0);
     }
@@ -205,8 +230,8 @@
     // optional drifting clock
     if (CONFIG.showClock) updateClock(tNow);
 
-    // auto-advance
-    if (!transitioning && (tNow - sceneStart) > currentDwell) advance(1);
+    // auto-advance (skipped while locked on one scene)
+    if (!locked && !transitioning && (tNow - sceneStart) > currentDwell) advance(1);
 
     // cursor idle hide
     if (tNow * 1000 - lastMouse > CONFIG.cursorIdleMs) document.body.style.cursor = "none";
@@ -280,6 +305,7 @@
       case "ArrowLeft": e.preventDefault(); advance(-1); break;
       case "ArrowUp": brightness = clamp(brightness + 0.05, 0.1, 1); flashHint("Brightness " + Math.round(brightness * 100) + "%"); break;
       case "ArrowDown": brightness = clamp(brightness - 0.05, 0.1, 1); flashHint("Brightness " + Math.round(brightness * 100) + "%"); break;
+      case "l": case "L": locked = !locked; flashHint(locked ? "🔒 Locked on this scene" : "Auto-rotating"); break;
       case "p": case "P": paused = !paused; flashHint(paused ? "Paused" : "Playing"); break;
       case "c": case "C": CONFIG.showClock = !CONFIG.showClock; clockEl.style.display = CONFIG.showClock ? "block" : "none"; break;
       case "h": case "H": case "?": toggleHelp(); break;
@@ -310,7 +336,7 @@
     stage.style.willChange = "transform";
     stage.style.background = "#000";
     document.body.appendChild(stage);
-    sctx = stage.getContext("2d");
+    sctx = stage.getContext("2d", { colorSpace: COLOR_SPACE });
 
     dimEl = document.createElement("div");
     dimEl.style.cssText = "position:fixed;inset:0;background:#000;pointer-events:none;z-index:10;transition:opacity .8s ease;";
@@ -339,7 +365,7 @@
       "<div style='opacity:.85'>Press <b>F11</b> for fullscreen</div>" +
       "<div style='opacity:.6;margin-top:14px;font-size:.92em'>" +
       "Space / &rarr; next &nbsp;·&nbsp; &larr; previous &nbsp;·&nbsp; &uarr;&darr; brightness<br>" +
-      "S shuffle &nbsp;·&nbsp; P pause &nbsp;·&nbsp; C clock &nbsp;·&nbsp; H this help</div>" +
+      "<b>L lock to this scene</b> &nbsp;·&nbsp; S shuffle &nbsp;·&nbsp; P pause &nbsp;·&nbsp; C clock &nbsp;·&nbsp; H help</div>" +
       "<div style='opacity:.4;margin-top:14px;font-size:.82em'>burn-in shield active · pixel-orbit + auto-dim</div>";
     document.body.appendChild(helpEl);
     setTimeout(function () { if (helpEl.dataset.shown === "1") { helpEl.dataset.shown = "0"; helpEl.style.opacity = "0"; } }, CONFIG.helpVisibleMs);
@@ -365,11 +391,27 @@
     if (q.has("dwell")) CONFIG.dwellSeconds = qnum(q.get("dwell"), 5, 600, CONFIG.dwellSeconds);
     if (q.has("clock")) CONFIG.showClock = (q.get("clock") !== "0" && q.get("clock") !== "false");
     if (q.has("auto")) CONFIG.autoQuality = (q.get("auto") !== "0" && q.get("auto") !== "false");
+    if (q.has("scene")) CONFIG.startScene = q.get("scene");
+    if (q.has("only")) { CONFIG.startScene = q.get("only"); CONFIG.lock = true; }   // pin to one scene
+    if (q.has("lock")) CONFIG.lock = (q.get("lock") !== "0" && q.get("lock") !== "false");
+  }
+
+  function normName(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ""); }
+  function resolveSceneIndex(spec) {
+    if (spec == null) return -1;
+    var s = String(spec).trim();
+    if (/^\d+$/.test(s)) { var n = parseInt(s, 10); if (n >= 0 && n < scenes.length) return n; }
+    var t = normName(s);
+    var i;
+    for (i = 0; i < scenes.length; i++) if (normName(scenes[i].name) === t) return i;     // exact
+    for (i = 0; i < scenes.length; i++) if (normName(scenes[i].name).indexOf(t) >= 0) return i; // partial
+    return -1;
   }
 
   /* ---------- boot ---------- */
   function boot() {
     applyQueryOverrides();
+    detectColorSpace();
     build();
     scenes = (window.OLED_SCENES || []).filter(function (s) { return s && typeof s.draw === "function"; });
     sizeStage();
@@ -379,6 +421,12 @@
       scenes = [fallbackScene()];
     }
     buildOrder();
+    var startIdx = resolveSceneIndex(CONFIG.startScene);
+    if (startIdx >= 0) {
+      var pos = order.indexOf(startIdx);
+      if (pos > 0) { order.splice(pos, 1); order.unshift(startIdx); }
+    }
+    locked = !!CONFIG.lock;
     gotoScene(order[0], true);
 
     window.addEventListener("resize", sizeStage);
